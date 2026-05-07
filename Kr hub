@@ -1,0 +1,344 @@
+-- KR HUB - Ultimate Dual System (認証成功後に完全リロード版)
+-- Key: KR Cool
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+local LP = Players.LocalPlayer
+local Task = task
+
+-- グローバル変数で入力キーを保持
+getgenv().EnteredKey = ""
+
+-- ==================== 認証画面 ====================
+local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/jadpy/suki/refs/heads/main/orion"))()
+
+local CorrectKey = "KR Cool"
+
+local KeyWindow = OrionLib:MakeWindow({
+    Name = "KR HUB | 認証システム",
+    HidePremium = true,
+    SaveConfig = false,
+    IntroEnabled = true,
+    IntroText = "KR HUB",
+    IntroIcon = "rbxassetid://4483345875"
+})
+
+local KeyTab = KeyWindow:MakeTab({
+    Name = "🔐 認証",
+    Icon = "rbxassetid://7733964712"
+})
+
+KeyTab:AddTextbox({
+    Name = "認証キーを入力",
+    Default = "",
+    TextDisappear = false,
+    Callback = function(Value)
+        getgenv().EnteredKey = Value
+    end
+})
+
+KeyTab:AddButton({
+    Name = "🔓 Check",
+    Callback = function()
+        local input = getgenv().EnteredKey or ""
+        input = input:match("^%s*(.-)%s*$")  -- 余分なスペース除去
+
+        if input == "" then
+            OrionLib:MakeNotification({
+                Name = "エラー",
+                Content = "キーを入力してください。",
+                Time = 5
+            })
+            return
+        end
+
+        if input == CorrectKey then
+            OrionLib:MakeNotification({
+                Name = "認証成功！",
+                Content = "KR HUBへようこそ！メイン機能が起動します...",
+                Image = "rbxassetid://4483345875",
+                Time = 6
+            })
+
+            task.wait(1.5)
+
+            -- 現在のOrionLib（認証画面）を完全に破棄
+            if OrionLib.Destroy then
+                OrionLib:Destroy()
+            end
+
+            -- 少し待ってからメインHUBを起動（完全にクリーンな状態で）
+            task.wait(0.5)
+
+            LoadMainHub()
+        else
+            OrionLib:MakeNotification({
+                Name = "認証失敗",
+                Content = "キーが間違っています。",
+                Image = "rbxassetid://7072725342",
+                Time = 5
+            })
+        end
+    end
+})
+
+OrionLib:Init()
+
+-- ==================== メインHUB（認証成功後にここだけ実行） ====================
+function LoadMainHub()
+    -- 新しくOrionLibを読み込み直す
+    local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/jadpy/suki/refs/heads/main/orion"))()
+
+    local Window = OrionLib:MakeWindow({
+        Name = "KR HUB - Ultimate Dual System",
+        HidePremium = true,
+        SaveConfig = false,
+        IntroEnabled = true,
+        IntroText = "KR HUB Premium",
+        IntroIcon = "rbxassetid://4483345875"
+    })
+
+    local MainTab = Window:MakeTab({Name = "💀 Main Control", Icon = "rbxassetid://7733749631"})
+    local SettingsTab = Window:MakeTab({Name = "⚙️ Settings", Icon = "rbxassetid://7734053495"})
+    local DiscordTab = Window:MakeTab({Name = "📱 Discord", Icon = "rbxassetid://7733774603"})
+
+    -- Discordタブ
+    DiscordTab:AddButton({
+        Name = "Discord LINK",
+        Callback = function()
+            setclipboard("https://discord.gg/MTACtfY2B")
+            OrionLib:MakeNotification({
+                Name = "コピー完了！",
+                Content = "Discord招待リンクをクリップボードにコピーしました！",
+                Image = "rbxassetid://4483345875",
+                Time = 4
+            })
+        end
+    })
+
+    DiscordTab:AddLabel("公式Discordで最新情報・サポートをゲット！")
+    DiscordTab:AddLabel("リンクをコピーして参加しよう")
+
+    -- ====================== メイン機能コード ======================
+    local Enabled = false
+    local TargetSet = "Sparkler"
+    local TargetSets = {
+        ["Toilet"] = {"Toilet", "ToiletWhite", "ToiletGold", "ToiletSeat"},
+        ["Sparkler"] = {"Sparkler", "FireworkSparkler"}
+    }
+    local TargetPlayerName = LP.DisplayName 
+
+    local RingRadius = 4
+    local RingObjectCount = 1
+    local RingSpeed = 3.0
+    local RingHeight = 1.0      
+
+    local WingPairs = 5
+    local WingObjectCount = WingPairs * 2
+    local WingSeparation = 2    
+    local WingAmplitude = 5     
+    local WingSpeed = 5         
+    local WingPhaseShift = 0.5  
+    local WingBaseHeight = 1.0  
+
+    local MaxVel = 1500
+    local Strength = 35
+
+    local list, loopConn = {}, nil
+
+    local function GetTargetHRP(playerName)
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.DisplayName == playerName then
+                return player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            end
+        end
+        return nil
+    end
+
+    local function getPartFromModel(m)
+        return m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")
+    end
+
+    local function attachPhysics(p)
+        if not p or not p.Parent then return end
+        pcall(function() p:SetNetworkOwner(LP) end)
+        p.CanCollide, p.CanTouch = false, false
+        
+        if not p:FindFirstChild("BodyVelocity") then
+            local bv = Instance.new("BodyVelocity")
+            bv.Name = "BodyVelocity"; bv.MaxForce = Vector3.new(1e9,1e9,1e9); bv.P = 1e6; bv.Velocity = Vector3.new()
+            bv.Parent = p
+        end
+        if not p:FindFirstChild("BodyGyro") then
+            local bg = Instance.new("BodyGyro")
+            bg.Name = "BodyGyro"; bg.MaxTorque = Vector3.new(1e9,1e9,1e9); bg.P = 1e6; bg.CFrame = p.CFrame
+            bg.Parent = p
+        end
+        Task.spawn(function() Task.wait(0.1) pcall(function() p.CanCollide = false end) end)
+    end
+
+    local function detachPhysics(p)
+        if not p then return end
+        local bv = p:FindFirstChild("BodyVelocity"); if bv then bv:Destroy() end
+        local bg = p:FindFirstChild("BodyGyro"); if bg then bg:Destroy() end
+        p.CanCollide, p.CanTouch = true, true
+        pcall(function() p:SetNetworkOwner(nil) end)
+    end
+
+    local function nameInTargets(n)
+        local t = TargetSets[TargetSet]
+        if not t then return false end
+        for _, nm in ipairs(t) do
+            if n == nm then return true end
+        end
+        return false
+    end
+
+    local function rescan()
+        for _,r in ipairs(list) do if r.part then detachPhysics(r.part) end end
+        list = {}
+        
+        local requiredTotal = RingObjectCount + WingObjectCount
+        local foundCount = 0
+        
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            if foundCount >= requiredTotal then break end 
+            if d:IsA("Model") and nameInTargets(d.Name) then
+                local part = getPartFromModel(d)
+                if part and not part.Anchored then
+                    pcall(function() part.Anchored = false end)
+                    table.insert(list, {model=d, part=part})
+                    foundCount += 1
+                    attachPhysics(part)
+                end
+            end
+        end
+        
+        if #list < requiredTotal then
+            OrionLib:MakeNotification({Name = "警告", Content = "オブジェクトが不足しています（必要: "..requiredTotal.."個）", Time = 5})
+        end
+    end
+
+    local function ringTargetFor(i, n, t, rootPos)
+        local ang = (math.rad(RingSpeed * 360) * t) 
+        local x = RingRadius * math.cos(ang)
+        local z = RingRadius * math.sin(ang)
+        local y = RingHeight
+        local rotatedOffset = CFrame.Angles(0, rootPos.Rotation.Y, 0):VectorToWorldSpace(Vector3.new(x, y, z))
+        return rootPos.Position + rotatedOffset
+    end
+
+    local function wingTargetFor(i, n, t, rootCFrame)
+        local pairIndex = math.ceil(i / 2) 
+        local isRight = i % 2 ~= 0
+        local xOffset = pairIndex * WingSeparation * (isRight and 1 or -1)
+        local phase = pairIndex * WingPhaseShift
+        local yOsc = WingAmplitude * math.sin(t * WingSpeed - phase)
+        local offset = Vector3.new(xOffset, yOsc, -3) 
+        local rotatedOffset = rootCFrame:VectorToWorldSpace(offset)
+        return rootCFrame.Position + rotatedOffset + Vector3.new(0, WingBaseHeight, 0)
+    end
+
+    local function startLoop()
+        if loopConn then loopConn:Disconnect() end
+        local tAccum = 0
+        loopConn = RunService.Heartbeat:Connect(function(dt)
+            local targetRoot = GetTargetHRP(TargetPlayerName)
+            if not targetRoot then return end
+            tAccum += dt
+            local rootCFrame = targetRoot.CFrame
+            for j = 1, #list do
+                local rec = list[j]; local p = rec and rec.part
+                if p and p.Parent then
+                    pcall(function() p.CanCollide = false end)
+                    local targetPos
+                    if j <= RingObjectCount then
+                        targetPos = ringTargetFor(j, RingObjectCount, tAccum, targetRoot) 
+                    else
+                        local wingIndex = j - RingObjectCount
+                        targetPos = wingTargetFor(wingIndex, WingObjectCount, tAccum, rootCFrame)
+                    end
+                    local dir = targetPos - p.Position
+                    local d = dir.Magnitude
+                    local bv = p:FindFirstChild("BodyVelocity")
+                    if bv then
+                        bv.Velocity = (d > 0.02) and dir.Unit * math.min(MaxVel, d*Strength) or Vector3.new()
+                    end
+                    local bg = p:FindFirstChild("BodyGyro")
+                    if bg then 
+                        bg.CFrame = CFrame.new(p.Position, targetRoot.Position) 
+                    end
+                end
+            end
+        end)
+    end
+
+    local function stopLoop()
+        if loopConn then loopConn:Disconnect() loopConn = nil end
+    end
+
+    local function updateState(v)
+        Enabled = v
+        if v then
+            rescan()
+            startLoop()
+        else
+            stopLoop()
+            for _,rec in ipairs(list) do if rec.part then detachPhysics(rec.part) end end
+            list = {}
+        end
+    end
+
+    local function getPlayerDisplayNames()
+        local names = {}
+        for _, player in ipairs(Players:GetPlayers()) do
+            table.insert(names, player.DisplayName)
+        end
+        return names
+    end
+
+    -- ====================== UI要素 ======================
+    MainTab:AddToggle({
+        Name = "🔥 Activate Dual System",
+        Default = false,
+        Callback = updateState
+    })
+
+    MainTab:AddDropdown({
+        Name = "🧨 Object Type",
+        Default = "Sparkler",
+        Options = {"Sparkler", "Toilet"},
+        Callback = function(v)
+            TargetSet = v
+            if Enabled then rescan() end
+        end
+    })
+
+    MainTab:AddDropdown({
+        Name = "👤 Target Player",
+        Default = TargetPlayerName,
+        Options = getPlayerDisplayNames(),
+        Callback = function(v)
+            TargetPlayerName = v
+            if Enabled then stopLoop() startLoop() end
+        end
+    })
+
+    SettingsTab:AddSection({Name = "Ring Settings"})
+    SettingsTab:AddSlider({Name = "Radius", Min = 2, Max = 10, Default = 4, Increment = 0.5, Callback = function(v) RingRadius = v end})
+    SettingsTab:AddSlider({Name = "Height", Min = 0.5, Max = 6, Default = 1, Increment = 0.1, Callback = function(v) RingHeight = v end})
+    SettingsTab:AddSlider({Name = "Speed", Min = 0.5, Max = 8, Default = 3, Increment = 0.1, Callback = function(v) RingSpeed = v end})
+
+    SettingsTab:AddSection({Name = "Wing Settings"})
+    SettingsTab:AddSlider({Name = "Amplitude", Min = 1, Max = 15, Default = 5, Increment = 0.5, Callback = function(v) WingAmplitude = v end})
+    SettingsTab:AddSlider({Name = "Separation", Min = 1, Max = 6, Default = 2, Increment = 0.1, Callback = function(v) WingSeparation = v end})
+    SettingsTab:AddSlider({Name = "Wing Speed", Min = 1, Max = 10, Default = 5, Increment = 0.1, Callback = function(v) WingSpeed = v end})
+
+    SettingsTab:AddSection({Name = "Performance"})
+    SettingsTab:AddSlider({Name = "Strength", Min = 10, Max = 60, Default = 35, Increment = 1, Callback = function(v) Strength = v end})
+    SettingsTab:AddSlider({Name = "Max Velocity", Min = 500, Max = 3000, Default = 1500, Increment = 100, Callback = function(v) MaxVel = v end})
+
+    OrionLib:Init()
+end
