@@ -1,0 +1,371 @@
+-- Orionライブラリのロード
+local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/jadpy/suki/refs/heads/main/orion"))()
+
+-- メインウィンドウの作成
+local Window = OrionLib:MakeWindow({
+    Name = "Target Player Grab",
+    HidePremium = false,
+    SaveConfig = true,
+    ConfigFolder = "TargetGrabConfig",
+    IntroEnabled = true,
+    IntroText = "Target Player Grab"
+})
+
+-- メインタブの作成
+local Tab = Window:MakeTab({
+    Name = "メインタブ",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+
+local selectedPlayer = nil
+local currentBlob = nil
+local isActive = false
+
+local function SetNetworkOwner(part)
+    if not part then return end
+    pcall(function()
+        ReplicatedStorage.GrabEvents.SetNetworkOwner:FireServer(part, LocalPlayer.Character.HumanoidRootPart.CFrame)
+    end)
+end
+
+local function GetMyToyFolder()
+    return workspace[LocalPlayer.Name .. "SpawnedInToys"]
+end
+
+local function GetMyRoot()
+    return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+end
+
+-- ブロブをアンカー
+local function AnchorBlob(blob)
+    if not blob then return end
+    for _, part in ipairs(blob:GetDescendants()) do
+        if part:IsA("BasePart") then
+            pcall(function()
+                part.Anchored = true
+            end)
+        end
+    end
+end
+
+-- ブロブのアンカー解除
+local function UnanchorBlob(blob)
+    if not blob then return end
+    for _, part in ipairs(blob:GetDescendants()) do
+        if part:IsA("BasePart") then
+            pcall(function()
+                part.Anchored = false
+            end)
+        end
+    end
+end
+
+-- GrabRelease（Releaseあり）
+local function GrabRelease(blob, targetPlayer)
+    if not blob or not targetPlayer or not targetPlayer.Character then return end
+    
+    local targetChar = targetPlayer.Character
+    if not targetChar or not targetChar:FindFirstChild("HumanoidRootPart") then return end
+    
+    pcall(function()
+        blob.BlobmanSeatAndOwnerScript.CreatureGrab:FireServer(table.unpack({
+            [1] = blob.LeftDetector,
+            [2] = targetChar.HumanoidRootPart,
+            [3] = blob.LeftDetector.LeftWeld,
+        }))
+    end)
+    
+    pcall(function()
+        blob.BlobmanSeatAndOwnerScript.CreatureRelease:FireServer(blob.LeftDetector.LeftWeld)
+    end)
+end
+
+-- 全プレイヤー取得（自分以外）
+local function GetAllPlayers()
+    local players = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            table.insert(players, player)
+        end
+    end
+    return players
+end
+
+-- プレイヤーリスト更新（ドロップダウン用）
+local function updatePlayerList()
+    local players = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            table.insert(players, player.Name)
+        end
+    end
+    return players
+end
+
+-- プレイヤー選択ドロップダウン
+Tab:AddDropdown({
+    Name = "ターゲット選択（単体）",
+    Default = "",
+    Options = updatePlayerList(),
+    Callback = function(Value)
+        selectedPlayer = Players:FindFirstChild(Value)
+        if selectedPlayer then
+            OrionLib:MakeNotification({
+                Name = "ターゲット選択",
+                Content = Value .. "を選択",
+                Time = 1.5
+            })
+        end
+    end
+})
+
+-- 単体実行ボタン
+Tab:AddButton({
+    Name = "🎯 単体 - テレポート→GrabRelease3回",
+    Callback = function()
+        if not selectedPlayer then
+            OrionLib:MakeNotification({
+                Name = "エラー",
+                Content = "先にターゲットを選択してください",
+                Time = 2
+            })
+            return
+        end
+
+        if not selectedPlayer.Character or not selectedPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            OrionLib:MakeNotification({
+                Name = "エラー",
+                Content = "ターゲットのキャラクターが無効です",
+                Time = 2
+            })
+            return
+        end
+
+        isActive = true
+        currentBlob = nil
+
+        -- 1. Blobmanスポーン
+        local character = LocalPlayer.Character
+        if character then
+            local rootPart = character:FindFirstChild("HumanoidRootPart")
+            if rootPart then
+                local spawnPos = rootPart.CFrame * CFrame.new(0, 0, -5)
+                ReplicatedStorage.MenuToys.SpawnToyRemoteFunction:InvokeServer("CreatureBlobman", spawnPos, Vector3.new(0, 127, 0))
+            end
+        end
+        task.wait(0.5)
+
+        local folder = GetMyToyFolder()
+        currentBlob = folder and folder:FindFirstChild("CreatureBlobman")
+
+        if not currentBlob then
+            OrionLib:MakeNotification({
+                Name = "エラー",
+                Content = "Blobmanのスポーンに失敗",
+                Time = 2
+            })
+            isActive = false
+            return
+        end
+
+        -- 2. VehicleSeatに座る
+        local vehicleSeat = currentBlob:FindFirstChild("VehicleSeat")
+        if vehicleSeat then
+            local humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                vehicleSeat:Sit(humanoid)
+            end
+        end
+        task.wait(0.3)
+
+        -- 3. ターゲットの位置にテレポート
+        local myRoot = GetMyRoot()
+        local targetRoot = selectedPlayer.Character and selectedPlayer.Character:FindFirstChild("HumanoidRootPart")
+        
+        if not myRoot or not targetRoot then
+            OrionLib:MakeNotification({
+                Name = "エラー",
+                Content = "キャラクターが見つかりません",
+                Time = 2
+            })
+            isActive = false
+            return
+        end
+
+        myRoot.CFrame = targetRoot.CFrame
+        task.wait(0.02)
+
+        -- 4. ネットワークオーナー取得
+        SetNetworkOwner(targetRoot)
+
+        -- 5. 【この1人のプレイヤーにGrabReleaseを3回実行（間隔0.08秒）】
+        --    3回終わるまでこの場でループ
+        for i = 1, 3 do
+            GrabRelease(currentBlob, selectedPlayer)
+            if i < 3 then
+                task.wait(0.08)  -- 3回目以外は待機
+            end
+        end
+        -- 3回終わったら次の処理へ
+
+        OrionLib:MakeNotification({
+            Name = "単体完了",
+            Content = selectedPlayer.Name .. "にGrabRelease 3回実行",
+            Time = 2
+        })
+
+        isActive = false
+    end
+})
+
+-- 全員実行ボタン
+Tab:AddButton({
+    Name = "👥 全員 - 各プレイヤーでGrab3回→0,100,0→円形配置",
+    Callback = function()
+        local allPlayers = GetAllPlayers()
+        if #allPlayers == 0 then
+            OrionLib:MakeNotification({
+                Name = "エラー",
+                Content = "他のプレイヤーがいません",
+                Time = 2
+            })
+            return
+        end
+
+        isActive = true
+        currentBlob = nil
+
+        -- ===== 1. スポーン＆Sit =====
+        local character = LocalPlayer.Character
+        if character then
+            local rootPart = character:FindFirstChild("HumanoidRootPart")
+            if rootPart then
+                local spawnPos = rootPart.CFrame * CFrame.new(0, 0, -5)
+                ReplicatedStorage.MenuToys.SpawnToyRemoteFunction:InvokeServer("CreatureBlobman", spawnPos, Vector3.new(0, 127, 0))
+            end
+        end
+        task.wait(0.5)
+
+        local folder = GetMyToyFolder()
+        currentBlob = folder and folder:FindFirstChild("CreatureBlobman")
+
+        if not currentBlob then
+            OrionLib:MakeNotification({
+                Name = "エラー",
+                Content = "Blobmanのスポーンに失敗",
+                Time = 2
+            })
+            isActive = false
+            return
+        end
+
+        local vehicleSeat = currentBlob:FindFirstChild("VehicleSeat")
+        if vehicleSeat then
+            local humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                vehicleSeat:Sit(humanoid)
+            end
+        end
+        task.wait(0.3)
+
+        local myRoot = GetMyRoot()
+        if not myRoot then
+            OrionLib:MakeNotification({
+                Name = "エラー",
+                Content = "自分のキャラクターが見つかりません",
+                Time = 2
+            })
+            isActive = false
+            return
+        end
+
+        -- ===== 2. 各プレイヤーに順番に処理 =====
+        for i, targetPlayer in ipairs(allPlayers) do
+            if not targetPlayer.Character or not targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                OrionLib:MakeNotification({
+                    Name = "スキップ",
+                    Content = targetPlayer.Name .. "のキャラクターが無効",
+                    Time = 1
+                })
+                continue
+            end
+
+            local targetRoot = targetPlayer.Character.HumanoidRootPart
+            
+            -- このプレイヤーの場所にテレポート
+            myRoot.CFrame = targetRoot.CFrame
+            task.wait(0.02)
+
+            -- ネットワークオーナー取得
+            SetNetworkOwner(targetRoot)
+
+            -- ★【この1人のプレイヤーにGrabReleaseを3回実行】
+            --   3回終わるまでこの場でループ
+            for j = 1, 3 do
+                GrabRelease(currentBlob, targetPlayer)
+                if j < 3 then
+                    task.wait(0.08)  -- 3回目以外は待機
+                end
+            end
+            -- 3回終わったら次のプレイヤーへ（待機なしで即次のループへ）
+        end
+
+        -- ===== 3. 自分を0,100,0にテレポート =====
+        local centerPos = CFrame.new(0, 100, 0)
+        myRoot.CFrame = centerPos
+        task.wait(0.1)
+
+        -- ===== 4. ブロブをアンカー =====
+        AnchorBlob(currentBlob)
+        task.wait(0.1)
+
+        -- ===== 5. 全員を円形に一気にテレポート =====
+        local radius = 15
+        local playerCount = #allPlayers
+        
+        for i, targetPlayer in ipairs(allPlayers) do
+            if targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                local targetRoot = targetPlayer.Character.HumanoidRootPart
+                local angle = math.rad((i - 1) * (360 / playerCount))
+                local x = centerPos.X + radius * math.cos(angle)
+                local z = centerPos.Z + radius * math.sin(angle)
+                local y = centerPos.Y
+                
+                targetRoot.CFrame = CFrame.new(x, y, z)
+            end
+        end
+
+        -- ===== 6. ブロブのアンカー解除 =====
+        task.wait(0.1)
+        UnanchorBlob(currentBlob)
+
+        OrionLib:MakeNotification({
+            Name = "全員完了",
+            Content = playerCount .. "人：Grab3回ずつ→0,100,0→円形配置",
+            Time = 3
+        })
+
+        isActive = false
+    end
+})
+
+-- 停止ボタン
+Tab:AddButton({
+    Name = "⏹ 停止",
+    Callback = function()
+        isActive = false
+        OrionLib:MakeNotification({
+            Name = "停止",
+            Content = "処理を停止しました",
+            Time = 1.5
+        })
+    end
+})
+
+OrionLib:Init()
