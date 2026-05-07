@@ -1,0 +1,1934 @@
+-- TYHUB Fling Things and People + WINGS（カメラズーム5000削除版）
+
+repeat task.wait() until game:IsLoaded()
+
+-- ============================================
+-- OrionLibのロード
+-- ============================================
+local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/jadpy/suki/refs/heads/main/orion"))()
+
+if not OrionLib then
+    warn("OrionLibのロードに失敗しました")
+    return
+end
+
+-- ============================================
+-- サービス取得
+-- ============================================
+local P = game:GetService("Players")
+local L = P.LocalPlayer
+local R = game:GetService("RunService")
+local RS = game:GetService("ReplicatedStorage")
+local D = game:GetService("Debris")
+local Li = game:GetService("Lighting")
+local U = game:GetService("UserInputService")
+local W = workspace
+local TS = game:GetService("TweenService")
+local Cam = workspace.CurrentCamera
+
+-- キャラクター待機
+repeat task.wait() until L.Character
+local LC = L.Character or L.CharacterAdded:Wait()
+L.CharacterAdded:Connect(function(c) LC = c end)
+
+-- ============================================
+-- 必要なイベントの取得
+-- ============================================
+local GE, MT, CE = RS:WaitForChild("GrabEvents", 10), RS:WaitForChild("MenuToys", 10), RS:WaitForChild("CharacterEvents", 10)
+if not GE or not MT or not CE then warn("必要なリモートイベントが見つかりませんでした") return end
+
+local SNO, STR, CGL, DGL, DToy, RR = GE:WaitForChild("SetNetworkOwner", 5), CE:WaitForChild("Struggle", 5), GE:WaitForChild("CreateGrabLine", 5), GE:WaitForChild("DestroyGrabLine", 5), MT:WaitForChild("DestroyToy", 5), CE:WaitForChild("RagdollRemote", 5)
+
+-- ============================================
+-- グローバル設定変数
+-- ============================================
+local cons = {}
+local originalVoidHeight = workspace.FallenPartsDestroyHeight
+
+-- UIアニメーション用変数
+local UIAnimations = {}
+local hoverEffects = {}
+local clickEffects = {}
+local rainbowConnection = nil
+
+-- ============================================
+-- 入力検知
+-- ============================================
+local LIT = Enum.UserInputType.None
+local TriggerBotKeybind = "Q"
+local TriggerBotEnabled = false
+local AutoShootEnabled = false
+local TriggerBotDelay = 0.1
+
+U.InputBegan:Connect(function(i, g)
+    if not g then 
+        LIT = i.UserInputType 
+        if i.KeyCode == Enum.KeyCode[TriggerBotKeybind] then
+            TriggerBotEnabled = not TriggerBotEnabled
+            animatedNotification("トリガーボット", TriggerBotEnabled and "有効化しました" or "無効化しました", 2)
+        end 
+    end 
+end)
+
+U.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton2 then 
+        LIT = Enum.UserInputType.None 
+    end 
+end)
+
+-- ============================================
+-- 共通関数
+-- ============================================
+local function getHum()
+    local c = L.Character
+    if not c then return nil end
+    return c:FindFirstChildOfClass("Humanoid")
+end
+
+local function getRootPart()
+    local c = L.Character
+    if not c then return nil end
+    return c:FindFirstChild("HumanoidRootPart")
+end
+
+local function LocalHRP()
+    local c = L and L.Character or nil
+    if not c then return nil end
+    return c:FindFirstChild("HumanoidRootPart")
+end
+
+local function animatedNotification(title, content, duration)
+    OrionLib:MakeNotification({
+        Name = title,
+        Content = content,
+        Image = "rbxassetid://4483345998",
+        Time = duration
+    })
+end
+
+local function SetNetworkOwner(part, cframe) 
+    if not part then return end 
+    pcall(function() 
+        SNO:FireServer(part, cframe or LocalHRP().CFrame) 
+    end) 
+end
+
+local function Velocity(part, vel)
+    if not part or not part.Parent then return end
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(1e8, 1e8, 1e8)
+    bv.Velocity = vel
+    bv.Parent = part
+    D:AddItem(bv, 0.1)
+end
+
+local function MoveTo(part, targetCFrame)
+    if not part or not part.Parent then return end
+    for _, v in ipairs(part.Parent:GetDescendants()) do 
+        if v:IsA("BasePart") then v.CanCollide = false end 
+    end
+    local b = Instance.new("BodyPosition")
+    b.MaxForce = Vector3.new(1e8, 1e8, 1e8)
+    b.Position = targetCFrame.Position
+    b.P, b.D = 2e4, 5e3
+    b.Parent = part
+    D:AddItem(b, 1)
+end
+
+local function ungrab(part) 
+    pcall(function() 
+        DGL:FireServer(part) 
+    end) 
+end
+
+-- ============================================
+-- 元のスクリプトの設定変数
+-- ============================================
+local EggConfig = {
+    Grab = { 
+        KickGrab = false, 
+        KillGrab = false, 
+        VoidGrab = false, 
+        AnchorGrab = false,
+        ThrowPower = 250,
+        ThrowEnabled = false
+    },
+    Defense = { 
+        AntiGrab = false, 
+        AntiVoid = false, 
+        AntiExplode = false, 
+        AntiRagdoll = false, 
+        AntiGucci = false 
+    },
+    Camera = {
+        MaxZoom = 128,
+        SuperZoom = false
+    }
+}
+
+local EggDefenseTimer = 0
+local affectedPlayers = {}
+local flingMemory = {}
+local AuraTimer = 0
+
+local Config = {
+    Aura = { 
+        KillAura = false, 
+        VoidAura = false, 
+        RagdollAura = false, 
+        FireAura = false, 
+        AnchorAura = false, 
+        NoclipAura = false,
+        BlastAura = false,
+        SpinAura = false,
+        FlingAura = false,
+        SlowLegsAura = false,
+        IrritateAura = false,
+        
+        BlastPower = 10000,
+        SpinSpeed = 100,
+        FlingPower = 5000,
+        SlowLegsSpeed = 5,
+        IrritateIntensity = 50,
+        Radius = 100,
+        Height = 100
+    },
+    Target = {
+        SelectedPlayer = nil,
+        KillAllLoop = false,
+        TeleportToTarget = false
+    }
+}
+
+-- 全員テレポート用
+local AllTeleportActive = false
+local AllTeleportInterval = 0.5
+local AllTeleportIndex = 1
+
+-- ============================================
+-- カメラ設定関数
+-- ============================================
+local function updateCameraZoom()
+    if EggConfig.Camera.SuperZoom then
+        L.CameraMaxZoomDistance = 50000
+    else
+        L.CameraMaxZoomDistance = EggConfig.Camera.MaxZoom
+    end
+end
+
+local lastSuperZoomState = false
+
+local function updateCameraMode()
+    if EggConfig.Camera.SuperZoom then
+        L.CameraMode = Enum.CameraMode.Classic
+    else
+        L.CameraMode = Enum.CameraMode.LockFirstPerson
+    end
+end
+
+-- ============================================
+-- サイレントエイム設定
+-- ============================================
+local saDist = 30
+local SIL = false
+
+local function STS()
+    if not (U.MouseEnabled or U.TouchEnabled) then return end 
+    local Hitbox = {"Head", "Torso", "Left Leg", "Right Leg"}
+    
+    local function GetClosest()
+        local Target, Closest = nil, math.huge 
+        for _, player in pairs(P:GetPlayers()) do 
+            if player.Name ~= L.Name and player.Character and L and L.Character and L.Character.HumanoidRootPart then 
+                local playerPosition = L.Character.HumanoidRootPart.Position 
+                local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+                if humanoidRootPart then 
+                    local screenPos, onScreen = Cam:WorldToScreenPoint(humanoidRootPart.Position)
+                    if onScreen then 
+                        local distance = (playerPosition - humanoidRootPart.Position).magnitude 
+                        if distance < Closest then Closest, Target = distance, player end 
+                    end 
+                end 
+            end 
+        end 
+        return Target 
+    end 
+    
+    local Target, part, partn, ch 
+    R.RenderStepped:Connect(function() Target = GetClosest() end)
+    
+    local function CalculateDirection(Origin, Destination, Length) 
+        return (Destination - Origin).Unit * Length 
+    end 
+    
+    local __namecall 
+    __namecall = hookmetamethod(game, "__namecall", function(...)
+        local args = {...}
+        local self, method = args[1], getnamecallmethod()
+        if self == workspace and not checkcaller() and method == "Raycast" and Target and Target.Character and Target.Character.HumanoidRootPart and L.Character.HumanoidRootPart and Target.Character.Humanoid and Target.Character.Humanoid.Health > 0 and SIL then 
+            local playerPosition, targetPosition = L.Character.HumanoidRootPart.Position, Target.Character.HumanoidRootPart.Position 
+            local distance = (playerPosition - targetPosition).magnitude 
+            part = math.random(1, #Hitbox)
+            partn = Hitbox[part]
+            ch = Target.Character[partn]
+            if distance <= saDist and ch then 
+                args[3] = CalculateDirection(args[2], Target.Character[partn].Position, 1000)
+                args[4] = RaycastParams.new()
+                args[4].FilterDescendantsInstances, args[4].FilterType = {Target.Character}, Enum.RaycastFilterType.Include 
+                part, partn, ch = nil, nil, nil 
+            end 
+        end 
+        return __namecall(unpack(args))
+    end)
+end
+
+-- ============================================
+-- トリガーボット
+-- ============================================
+local function TriggerBot()
+    if not TriggerBotEnabled and not AutoShootEnabled then return end
+    
+    local mouse = L:GetMouse()
+    local targetPart = mouse.Target
+    
+    if targetPart and targetPart.Parent then
+        local humanoid = targetPart.Parent:FindFirstChild("Humanoid") or 
+                         targetPart.Parent.Parent:FindFirstChild("Humanoid")
+        
+        if humanoid and humanoid.Health > 0 then
+            local player = game.Players:GetPlayerFromCharacter(targetPart.Parent)
+            if player and player ~= L then
+                local screenPoint = Cam:WorldToScreenPoint(targetPart.Position)
+                if screenPoint.Z > 0 then
+                    if AutoShootEnabled then
+                        mouse1click()
+                    elseif TriggerBotEnabled then
+                        mouse1click()
+                        wait(TriggerBotDelay)
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- ============================================
+-- 照準器設定
+-- ============================================
+local crosshairOpacity = 1
+local crosshairColor = Color3.new(1, 1, 1)
+local crosshairRainbow = false
+local originalCrosshair, customCrosshair, crosshairVisible = nil, nil, false
+
+local function updateCrosshair()
+    pcall(function()
+        local crosshairs = customCrosshair or L.PlayerGui:FindFirstChild("CustomCrosshairs")
+        if crosshairs and crosshairVisible then 
+            local frame = crosshairs:FindFirstChild("CrosshairsFrame")
+            if frame then 
+                for _, child in pairs(frame:GetChildren()) do 
+                    if child:IsA("Frame") or child:IsA("ImageLabel") then 
+                        child.BackgroundTransparency = 1 - crosshairOpacity 
+                        if not crosshairRainbow then 
+                            child.BackgroundColor3 = crosshairColor 
+                            if child:IsA("ImageLabel") then child.ImageColor3 = crosshairColor end 
+                        end 
+                        local stroke = child:FindFirstChildOfClass("UIStroke")
+                        if not stroke then 
+                            stroke = Instance.new("UIStroke") 
+                            stroke.Parent = child 
+                        end 
+                        stroke.Thickness = 1
+                        stroke.Color = crosshairColor
+                        stroke.Transparency = 1 - crosshairOpacity 
+                    end 
+                end 
+            end 
+        end 
+    end)
+end
+
+-- レインボー照準器処理
+spawn(function()
+    while wait(0.03) do 
+        if crosshairRainbow and crosshairVisible then 
+            local hue = tick() % 5 / 5 
+            local rainbowColor = Color3.fromHSV(hue, 1, 1)
+            pcall(function()
+                local crosshairs = customCrosshair or L.PlayerGui:FindFirstChild("CustomCrosshairs")
+                if crosshairs then 
+                    local frame = crosshairs:FindFirstChild("CrosshairsFrame")
+                    if frame then 
+                        for _, child in pairs(frame:GetChildren()) do 
+                            if child:IsA("Frame") or child:IsA("ImageLabel") then 
+                                child.BackgroundTransparency = 1 - crosshairOpacity
+                                child.BackgroundColor3 = rainbowColor 
+                                if child:IsA("ImageLabel") then child.ImageColor3 = rainbowColor end 
+                                local stroke = child:FindFirstChildOfClass("UIStroke")
+                                if stroke then 
+                                    stroke.Color = rainbowColor
+                                    stroke.Transparency = 1 - crosshairOpacity
+                                end 
+                            end 
+                        end 
+                    end 
+                end 
+            end)
+        end 
+    end 
+end)
+
+-- ============================================
+-- UIカラー設定
+-- ============================================
+local RainbowEnabled = false
+local CustomColorEnabled = false
+local selectedColor = Color3.fromRGB(0, 255, 255)
+
+local function startRainbowUI()
+    if rainbowConnection then 
+        rainbowConnection:Disconnect()
+        rainbowConnection = nil
+    end
+    
+    rainbowConnection = R.RenderStepped:Connect(function()
+        local hue = tick() % 5 / 5 
+        local color = Color3.fromHSV(hue, 0.8, 1)
+        
+        for Name, Type in pairs(OrionLib.ThemeObjects) do 
+            if Name == "Stroke" or Name == "Divider" then 
+                for _, Object in pairs(Type) do 
+                    if Object and Object.Parent then 
+                        local property = Object:IsA("UIStroke") and "Color" or "BackgroundColor3"
+                        Object[property] = color 
+                    end 
+                end 
+            end 
+        end 
+        
+        for _, Object in pairs(OrionLib.ThemeObjects.Text or {}) do 
+            if Object and Object.Parent then 
+                if Object:IsA("TextLabel") and Object.Name == "TabTitle" then 
+                    Object.TextColor3 = color
+                end 
+            end 
+        end
+    end)
+end
+
+local function applyCustomColor()
+    if rainbowConnection then 
+        rainbowConnection:Disconnect()
+        rainbowConnection = nil
+    end
+    
+    for Name, Type in pairs(OrionLib.ThemeObjects) do 
+        if Name == "Stroke" or Name == "Divider" then 
+            for _, Object in pairs(Type) do 
+                if Object and Object.Parent then 
+                    local property = Object:IsA("UIStroke") and "Color" or "BackgroundColor3"
+                    Object[property] = selectedColor 
+                end 
+            end 
+        end 
+    end
+    
+    for _, Object in pairs(OrionLib.ThemeObjects.Text or {}) do 
+        if Object and Object.Parent then 
+            if Object:IsA("TextLabel") and Object.Name == "TabTitle" then 
+                Object.TextColor3 = selectedColor
+            end 
+        end 
+    end
+end
+
+local function resetUIColor()
+    if rainbowConnection then 
+        rainbowConnection:Disconnect()
+        rainbowConnection = nil
+    end
+    
+    local defaultColor = Color3.fromRGB(255, 255, 255)
+    
+    for Name, Type in pairs(OrionLib.ThemeObjects) do 
+        if Name == "Stroke" or Name == "Divider" then 
+            for _, Object in pairs(Type) do 
+                if Object and Object.Parent then 
+                    local property = Object:IsA("UIStroke") and "Color" or "BackgroundColor3"
+                    Object[property] = defaultColor 
+                end 
+            end 
+        end 
+    end
+    
+    for _, Object in pairs(OrionLib.ThemeObjects.Text or {}) do 
+        if Object and Object.Parent then 
+            if Object:IsA("TextLabel") and Object.Name == "TabTitle" then 
+                Object.TextColor3 = defaultColor
+            end 
+        end 
+    end
+end
+
+local function updateUIColor()
+    if RainbowEnabled then
+        startRainbowUI()
+    elseif CustomColorEnabled then
+        applyCustomColor()
+    else
+        resetUIColor()
+    end
+end
+
+-- ============================================
+-- UIアニメーション関数
+-- ============================================
+local function createHoverAnimation(button)
+    if hoverEffects[button] then return end
+    
+    local originalSize = button.Size
+    hoverEffects[button] = true
+    
+    button.MouseEnter:Connect(function()
+        TS:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = originalSize + UDim2.new(0, 5, 0, 5)
+        }):Play()
+    end)
+    
+    button.MouseLeave:Connect(function()
+        TS:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = originalSize
+        }):Play()
+    end)
+end
+
+local function createClickAnimation(button)
+    if clickEffects[button] then return end
+    
+    clickEffects[button] = true
+    local originalBackgroundColor = button.BackgroundColor3
+    
+    button.MouseButton1Down:Connect(function()
+        TS:Create(button, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        }):Play()
+    end)
+    
+    button.MouseButton1Up:Connect(function()
+        TS:Create(button, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = originalBackgroundColor
+        }):Play()
+    end)
+end
+
+-- ============================================
+-- ★★★ WINGS MOD（tp-hub V3.6から完全移植）★★★
+-- ============================================
+local WingsEnabled = false
+local WingsSpacing = 0.0
+local WingsHeight = 2.0  
+local WingsBackOffset = 0.5  
+local WingsSideOffset = 0.0
+local WingsWaveAmp = 2.5
+local WingsWaveSpeed = 5.0
+local WingsTwistAngle = 20.0
+local WingsTwistSpeed = 5.0
+local WingsTwistWave = 0.5
+local WingsTargetSet = "Sparkler"
+local WingsDefaultZoom = 12
+
+local WingsTargetSets = {
+    ["GlassBox"] = {"GlassBoxGray"},
+    ["Pallet"] = {"PalletLightBrown"},
+    ["Sparkler"] = {"FireworkSparkler"},
+    ["Toilet"] = {"ToiletWhite","ToiletGold"},
+    ["Piano"] = {"KeyboardPart", "MusicKeyboard"},
+    ["Stick"] = {"Stick"}
+}
+
+local WingsList, WingsLoopConn = {}, nil
+local WingsTimer = 0
+WingsTargetPlayer = nil
+
+-- WINGS用HRP
+local function WingsHRP()
+    if WingsTargetPlayer and WingsTargetPlayer.Character and WingsTargetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        return WingsTargetPlayer.Character.HumanoidRootPart
+    end
+    local c = L.Character or L.CharacterAdded:Wait()
+    return c:FindFirstChild("HumanoidRootPart")
+end
+
+local function WingsGetPartFromModel(m)
+    if m.PrimaryPart then return m.PrimaryPart end
+    return m:FindFirstChildWhichIsA("BasePart")
+end
+
+local function WingsNameInTargets(n)
+    local t = WingsTargetSets[WingsTargetSet]
+    if not t then return false end
+    for _, nm in ipairs(t) do if n == nm then return true end end
+    return false
+end
+
+local function WingsAttachPhysics(rec)
+    local model = rec.model; local part = rec.part
+    if not model or not part or not part.Parent then return end
+    for _, p in ipairs(model:GetDescendants()) do
+        if p:IsA("BasePart") and not p:IsA("BodyMover") then
+            pcall(function() p:SetNetworkOwner(L) end)
+            p.CanCollide, p.CanTouch = false, false
+        end
+    end
+    if not part:FindFirstChild("BodyVelocity") then
+        local bv = Instance.new("BodyVelocity", part); bv.Name = "BodyVelocity"; bv.MaxForce = Vector3.new(1e8,1e8,1e8); bv.Velocity = Vector3.new(); bv.P = 1e6
+    end
+    if not part:FindFirstChild("BodyGyro") then
+        local bg = Instance.new("BodyGyro", part); bg.Name = "BodyGyro"; bg.MaxTorque = Vector3.new(1e8,1e8,1e8); bg.CFrame = part.CFrame; bg.P = 1e6
+    end
+end
+
+local function WingsDetachPhysics(rec)
+    local model = rec.model; local part = rec.part
+    if not model or not part then return end
+    if part:FindFirstChild("BodyVelocity") then part.BodyVelocity:Destroy() end
+    if part:FindFirstChild("BodyGyro") then part.BodyGyro:Destroy() end
+    for _, p in ipairs(model:GetDescendants()) do
+        if p:IsA("BasePart") and not p:IsA("BodyMover") then
+            p.CanCollide, p.CanTouch = true, true
+            pcall(function() p:SetNetworkOwner(nil) end)
+        end
+    end
+end
+
+local function WingsRescan()
+    for _,r in ipairs(WingsList) do WingsDetachPhysics(r) end
+    WingsList = {}
+    for _, d in ipairs(W:GetDescendants()) do
+        if d:IsA("Model") and WingsNameInTargets(d.Name) then
+            local part = WingsGetPartFromModel(d)
+            if part and not part.Anchored then table.insert(WingsList, {model=d, part=part}) end
+        elseif d:IsA("BasePart") and WingsNameInTargets(d.Name) then 
+            if not d.Anchored then table.insert(WingsList, {model=d, part=d}) end
+        end
+    end
+    for i = 1, #WingsList do WingsAttachPhysics(WingsList[i]) end
+end
+
+local function WingsStartLoop()
+    if WingsLoopConn then WingsLoopConn:Disconnect() end
+    WingsTimer = 0
+    WingsLoopConn = R.Heartbeat:Connect(function(dt)
+        local root = WingsHRP()
+        if not root or #WingsList == 0 then return end
+        WingsTimer = WingsTimer + dt
+        local wingsCenter = root.CFrame * CFrame.new(WingsSideOffset, WingsHeight, WingsBackOffset)
+        local WaveConstant = math.pi / #WingsList
+        for j = 1, #WingsList do
+            local rec = WingsList[j]; local p = rec.part
+            if p and p.Parent then
+                local isRight = (j % 2 == 0); local sign = isRight and 1 or -1
+                local animationIndex = math.ceil(j / 2)
+                local distanceIndex = isRight and (j - 2) / 2 or (j - 1) / 2
+                local xOffset = WingsSpacing * (distanceIndex + 0.2) * sign
+                local waveOffset = WingsWaveAmp * math.sin(WingsWaveSpeed * WingsTimer + animationIndex * WaveConstant)
+                local twistOscillation = math.sin(WingsTwistSpeed * WingsTimer + animationIndex * WingsTwistWave)
+                local currentTwistAngle = math.rad(WingsTwistAngle * twistOscillation * (distanceIndex / (#WingsList / 2)))
+                local targetCFrame = wingsCenter * CFrame.Angles(currentTwistAngle, 0, 0) * CFrame.new(xOffset, waveOffset, 0)    
+                if p:FindFirstChild("BodyVelocity") then p.BodyVelocity.Velocity = (targetCFrame.Position - p.Position) * 20 end    
+                if p:FindFirstChild("BodyGyro") then p.BodyGyro.CFrame = targetCFrame end    
+            end    
+        end
+    end)
+end
+
+-- 竜巻モード（WINGS）
+local WingsTornadoEnabled = false
+local WingsTornadoRadius = 13.5
+local WingsTornadoHeight = 23
+local WingsTornadoSpeed = 4
+local WingsTornadoConn = nil
+
+local function WingsStartTornado()
+    if WingsTornadoConn then WingsTornadoConn:Disconnect() end
+    WingsRescan()  
+    WingsTornadoConn = R.Heartbeat:Connect(function(dt)  
+        local root = WingsHRP()  
+        if not root or #WingsList == 0 then return end  
+        WingsTimer = WingsTimer + dt  
+        local baseCF = root.CFrame  
+        for i, rec in ipairs(WingsList) do  
+            local p = rec.part  
+            if p and p.Parent then  
+                local heightOffset = (i / #WingsList) * WingsTornadoHeight  
+                local angle = (WingsTimer * WingsTornadoSpeed) + (i * math.pi * 2 / #WingsList)  
+                local x = math.cos(angle) * WingsTornadoRadius  
+                local z = math.sin(angle) * WingsTornadoRadius  
+                local targetCFrame = baseCF * CFrame.new(x, heightOffset, z) * CFrame.Angles(0, angle, 0)  
+                if p:FindFirstChild("BodyVelocity") then p.BodyVelocity.Velocity = (targetCFrame.Position - p.Position) * 30 end  
+                if p:FindFirstChild("BodyGyro") then p.BodyGyro.CFrame = targetCFrame end  
+            end  
+        end  
+    end)
+end
+
+local function WingsStopTornado()
+    if WingsTornadoConn then WingsTornadoConn:Disconnect(); WingsTornadoConn = nil end
+    for _, rec in ipairs(WingsList) do WingsDetachPhysics(rec) end  
+    WingsList = {}
+end
+
+-- 円形モード（WINGS）
+local WingsCircleEnabled = false
+local WingsCircleRadius = 13.5
+local WingsCircleHeight = 2
+local WingsCircleSpeed = 10
+local WingsCircleConn = nil
+
+local function WingsStartCircle()
+    if WingsCircleConn then WingsCircleConn:Disconnect() end
+    WingsRescan()  
+    WingsCircleConn = R.Heartbeat:Connect(function(dt)  
+        local root = WingsHRP()  
+        if not root or #WingsList == 0 then return end  
+        WingsTimer = WingsTimer + dt  
+        local baseCF = root.CFrame  
+        for i, rec in ipairs(WingsList) do  
+            local p = rec.part  
+            if p and p.Parent then  
+                local angle = (i / #WingsList) * math.pi * 2 + (WingsTimer * WingsCircleSpeed)  
+                local x = math.cos(angle) * WingsCircleRadius  
+                local z = math.sin(angle) * WingsCircleRadius  
+                local targetCFrame = baseCF * CFrame.new(x, WingsCircleHeight, z) * CFrame.Angles(0, angle, 0)  
+                if p:FindFirstChild("BodyVelocity") then p.BodyVelocity.Velocity = (targetCFrame.Position - p.Position) * 30 end  
+                if p:FindFirstChild("BodyGyro") then p.BodyGyro.CFrame = targetCFrame end  
+            end  
+        end  
+    end)
+end
+
+local function WingsStopCircle()
+    if WingsCircleConn then WingsCircleConn:Disconnect(); WingsCircleConn = nil end
+    for _, rec in ipairs(WingsList) do WingsDetachPhysics(rec) end  
+    WingsList = {}
+end
+
+-- コーンモード（WINGS）
+local WingsConeMaxH, WingsConeGrowS, WingsConeRadius, WingsConeSpeed, WingsConeConn = 40, 2, 15, 10, nil
+
+local function WingsStartCone()
+    if WingsConeConn then WingsConeConn:Disconnect() end
+    WingsRescan()
+    WingsConeConn = R.Heartbeat:Connect(function(dt)
+        local root = WingsHRP()
+        if not root or not WingsList or #WingsList == 0 then return end
+        WingsTimer = WingsTimer + dt
+        local curH = (math.sin(WingsTimer * WingsConeGrowS) + 1) / 2 * WingsConeMaxH
+        for i, rec in ipairs(WingsList) do
+            local p = rec.part
+            if p and p.Parent then
+                local prog = i / #WingsList
+                local r = WingsConeRadius * (1 - prog)
+                local h = prog * curH
+                local ang = (WingsTimer * (WingsConeSpeed / 2)) + (i * math.pi * 2 / #WingsList)
+                local targetCF = root.CFrame * CFrame.new(math.cos(ang)*r, h, math.sin(ang)*r) * CFrame.Angles(0, ang, 0)
+                if p:FindFirstChild("BodyVelocity") then p.BodyVelocity.Velocity = (targetCF.Position - p.Position) * 30 end
+                if p:FindFirstChild("BodyGyro") then p.BodyGyro.CFrame = targetCF end
+            end
+        end
+    end)
+end
+
+local function WingsStopCone()
+    if WingsConeConn then WingsConeConn:Disconnect(); WingsConeConn = nil end
+    for _, rec in ipairs(WingsList) do WingsDetachPhysics(rec) end
+    WingsList = {}
+end
+
+-- 高速回転（WINGS）
+local WingsSpinEnabled = false
+local WingsSpinSpeed = 10 
+
+R.Heartbeat:Connect(function()
+    if not WingsSpinEnabled then return end
+    local char = L.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(WingsSpinSpeed), 0)
+    end
+end)
+
+-- ============================================
+-- ターゲット機能用関数
+-- ============================================
+local function GetPlayersInOrder()
+    local allPlayers = {}
+    for _, player in ipairs(P:GetPlayers()) do
+        if player ~= L and player.Character then
+            table.insert(allPlayers, player)
+        end
+    end
+    return allPlayers
+end
+
+local function TeleportToPlayer(player)
+    if not player or player == L then return end
+    local targetChar = player.Character
+    if not targetChar then return end
+    local targetHRP = targetChar:FindFirstChild("HumanoidRootPart")
+    if not targetHRP then return end
+    
+    local myHRP = LocalHRP()
+    if not myHRP then return end
+    
+    local camera = Cam
+    local cameraCF = camera.CFrame
+    local rightVector = cameraCF.RightVector
+    local teleportPosition = targetHRP.Position + (rightVector * 5)
+    
+    myHRP.CFrame = CFrame.new(teleportPosition, targetHRP.Position)
+end
+
+local function StartAllTeleportLoop()
+    if AllTeleportActive then return end
+    AllTeleportActive = true
+    AllTeleportIndex = 1
+    
+    local allPlayers = GetPlayersInOrder()
+    
+    if #allPlayers == 0 then
+        AllTeleportActive = false
+        return
+    end
+    
+    task.spawn(function()
+        while AllTeleportActive do
+            local player = allPlayers[AllTeleportIndex]
+            if player then
+                TeleportToPlayer(player)
+            end
+            
+            AllTeleportIndex = AllTeleportIndex + 1
+            if AllTeleportIndex > #allPlayers then
+                AllTeleportIndex = 1
+            end
+            
+            task.wait(AllTeleportInterval)
+        end
+    end)
+end
+
+local function StopAllTeleportLoop()
+    AllTeleportActive = false
+end
+
+local function KillPlayer(player)
+    if not player or not player.Character then return end
+    local root = player.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    local myPos = LocalHRP()
+    if not myPos then return end
+    
+    local myPosCF = myPos.CFrame
+    myPos.CFrame = root.CFrame + Vector3.new(0, -6, 0)
+    task.wait(0.1)
+    
+    for i = 1, 4 do 
+        SetNetworkOwner(root, myPos.CFrame) 
+        task.wait(0.05) 
+    end
+    
+    MoveTo(root, CFrame.new(4096, -75, 4096))
+    Velocity(root, Vector3.new(0, -1000, 0))
+    
+    task.wait(0.3)
+    myPos.CFrame = myPosCF
+end
+
+-- ============================================
+-- オーラ機能用関数
+-- ============================================
+local function GetNearPartsInSphere(origin, radius, height)
+    local sphere = Instance.new("Part")
+    sphere.Size = Vector3.new(radius * 2, height * 2, radius * 2)
+    sphere.Position = origin
+    sphere.Anchored = true
+    sphere.CanCollide = false
+    sphere.Transparency = 1
+    sphere.Parent = W
+    
+    local parts = W:GetPartsInPart(sphere)
+    sphere:Destroy()
+    
+    local partsInSphere = {}
+    for _, part in ipairs(parts) do
+        local distance = (part.Position - origin).Magnitude
+        local heightDiff = math.abs(part.Position.Y - origin.Y)
+        
+        if distance <= radius and heightDiff <= height / 2 then
+            table.insert(partsInSphere, part)
+        end
+    end
+    
+    return partsInSphere
+end
+
+local function MakeSlowLegs(character)
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.WalkSpeed = Config.Aura.SlowLegsSpeed
+        affectedPlayers[character] = true
+    end
+end
+
+local function IrritatePlayer(character)
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if root then
+        for i = 1, 10 do
+            task.spawn(function()
+                task.wait(i * 0.05)
+                local offset = Vector3.new(
+                    math.random(-Config.Aura.IrritateIntensity, Config.Aura.IrritateIntensity),
+                    math.random(-Config.Aura.IrritateIntensity/2, Config.Aura.IrritateIntensity/2),
+                    math.random(-Config.Aura.IrritateIntensity, Config.Aura.IrritateIntensity)
+                )
+                Velocity(root, offset)
+            end)
+        end
+    end
+end
+
+-- ============================================
+-- 掴み機能イベント
+-- ============================================
+W.ChildAdded:Connect(function(v)
+    if v.Name == "GrabParts" and v:IsA("Model") then
+        task.spawn(function()
+            task.wait(0.1)
+            local GrabPart = v:FindFirstChild("GrabPart")
+            if not GrabPart then return end
+            local WeldConstraint = GrabPart:FindFirstChild("WeldConstraint")
+            if not WeldConstraint or not WeldConstraint.Part1 then return end
+            local target = WeldConstraint.Part1
+            
+            if EggConfig.Grab.ThrowEnabled then
+                v:GetPropertyChangedSignal("Parent"):Connect(function()
+                    if not v.Parent and target and target.Parent then
+                        local throwVel = Instance.new("BodyVelocity")
+                        throwVel.MaxForce = Vector3.new(1e8, 1e8, 1e8)
+                        throwVel.Velocity = Cam.CFrame.LookVector * EggConfig.Grab.ThrowPower
+                        throwVel.Parent = target
+                        D:AddItem(throwVel, 0.1)
+                    end
+                end)
+            end
+            
+            if EggConfig.Grab.VoidGrab then 
+                SetNetworkOwner(target) 
+                Velocity(target, Vector3.new(0, 10000, 0)) 
+            end
+            
+            if EggConfig.Grab.KillGrab then 
+                SetNetworkOwner(target) 
+                MoveTo(target, CFrame.new(4096, -75, 4096)) 
+                Velocity(target, Vector3.new(0, -1000, 0)) 
+            end
+            
+            if EggConfig.Grab.KickGrab then
+                local player = P:GetPlayerFromCharacter(target.Parent)
+                if player then 
+                    SetNetworkOwner(target) 
+                    MoveTo(target, CFrame.new(25e25, 25e25, 25e25)) 
+                    task.wait(0.5) 
+                    ungrab(target) 
+                end
+            end
+            
+            if EggConfig.Grab.AnchorGrab then
+                SetNetworkOwner(target)
+                local pos = target.CFrame
+                for _ = 1, 2 do
+                    SetNetworkOwner(target)
+                    local bp = Instance.new("BodyPosition")
+                    bp.Position = pos.Position
+                    bp.MaxForce = Vector3.new(1e8, 1e8, 1e8)
+                    bp.Parent = target
+                    local bg = Instance.new("BodyGyro")
+                    bg.CFrame = pos
+                    bg.MaxTorque = Vector3.new(1e8, 1e8, 1e8)
+                    bg.Parent = target
+                    task.wait(0.5)
+                end
+            end
+        end)
+    end
+end)
+
+-- ============================================
+-- OrionLib UI メインウィンドウ
+-- ============================================
+local Win = OrionLib:MakeWindow({
+    Name = "TYHUB Fling Things and People + WINGS",
+    HidePremium = false,
+    SaveConfig = true,
+    ConfigFolder = "TYHUB_Complete",
+    IntroEnabled = false
+})
+
+if not Win then
+    warn("ウィンドウの作成に失敗しました")
+    return
+end
+
+-- ============================================
+-- タブ1: WINGS（tp-hub V3.6完全移植）- カメラズーム5000削除済み
+-- ============================================
+local WingTab = Win:MakeTab({
+    Name = "WINGS",
+    Icon = "rbxassetid://6031075927",
+    PremiumOnly = false
+})
+
+WingTab:AddDropdown({
+    Name = "ターゲット選択",
+    Default = WingsTargetSet,
+    Options = {"Stick", "Sparkler","Toilet", "Piano", "GlassBox", "Pallet"},
+    Callback = function(v) 
+        WingsTargetSet = v
+        if WingsEnabled then 
+            WingsRescan() 
+        end 
+    end
+})
+
+WingTab:AddToggle({
+    Name = "翼 起動/停止",
+    Default = false,
+    Callback = function(v)
+        WingsEnabled = v
+        if v then 
+            -- 他のWINGSモードを停止
+            if WingsTornadoEnabled then
+                WingsTornadoEnabled = false
+                WingsStopTornado()
+            end
+            if WingsCircleEnabled then
+                WingsCircleEnabled = false
+                WingsStopCircle()
+            end
+            if WingsConeConn then
+                WingsStopCone()
+            end
+            
+            WingsRescan()
+            WingsStartLoop()
+        else 
+            if WingsLoopConn then WingsLoopConn:Disconnect() end
+            for _,rec in ipairs(WingsList) do WingsDetachPhysics(rec) end
+            WingsList = {}
+        end
+    end
+})
+
+WingTab:AddButton({
+    Name = "Fly GUI v3 起動",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/XNEOFF/FlyGuiV3/main/FlyGuiV3.txt"))()
+    end
+})
+
+WingTab:AddSlider({ 
+    Name = "翼の広さ (Spacing)", 
+    Min = 0, 
+    Max = 5, 
+    Default = 0.2, 
+    Increment = 0.1, 
+    Callback = function(v) WingsSpacing = v end 
+})
+
+WingTab:AddSlider({ 
+    Name = "翼の高さ (Height)", 
+    Min = -10, 
+    Max = 100, 
+    Default = 2, 
+    Increment = 1, 
+    Callback = function(v) WingsHeight = v end 
+})
+
+-- ★★★ 「カメラズーム5000」のトグルを削除しました ★★★
+
+-- WINGS 対象プレイヤー
+local function getPlayerNameList()
+    local t = {"自分"}
+    for _, plr in ipairs(P:GetPlayers()) do
+        if plr ~= L then
+            table.insert(t, plr.Name)
+        end
+    end
+    return t
+end
+
+WingTab:AddDropdown({
+    Name = "WINGS 対象プレイヤー",
+    Default = "自分",
+    Options = getPlayerNameList(),
+    Callback = function(v)
+        if v == "自分" then
+            WingsTargetPlayer = nil
+        else
+            WingsTargetPlayer = P:FindFirstChild(v)
+        end
+    end
+})
+
+WingTab:AddToggle({
+    Name = "高速回転 (右スピン)",
+    Default = false,
+    Callback = function(v)
+        WingsSpinEnabled = v
+    end
+})
+
+WingTab:AddSlider({
+    Name = "回転スピード",
+    Min = 1,
+    Max = 20,
+    Default = 10,
+    Increment = 1,
+    Callback = function(v)
+        WingsSpinSpeed = v
+    end
+})
+
+-- 竜巻モード
+WingTab:AddToggle({
+    Name = "竜巻モード",
+    Default = false,
+    Callback = function(v)
+        WingsTornadoEnabled = v
+        if v then  
+            if WingsLoopConn then WingsLoopConn:Disconnect() end
+            if WingsCircleConn then WingsCircleConn:Disconnect() end
+            if WingsConeConn then WingsConeConn:Disconnect() end
+            WingsStartTornado()
+        else  
+            WingsStopTornado()
+            if WingsEnabled then WingsRescan(); WingsStartLoop() end
+        end  
+    end
+})
+
+-- 円形モード
+WingTab:AddToggle({
+    Name = "円形モード",
+    Default = false,
+    Callback = function(v)
+        WingsCircleEnabled = v
+        if v then  
+            if WingsLoopConn then WingsLoopConn:Disconnect() end
+            if WingsTornadoConn then WingsTornadoConn:Disconnect() end
+            if WingsConeConn then WingsConeConn:Disconnect() end
+            WingsStartCircle()
+        else  
+            WingsStopCircle()
+            if WingsEnabled then WingsRescan(); WingsStartLoop() end
+        end  
+    end
+})
+
+-- モードカスタム設定
+WingTab:AddSection({Name = "竜巻モード設定"})
+WingTab:AddSlider({ Name = "竜巻 速度", Min = 1, Max = 50, Default = 4, Increment = 1, Callback = function(v) WingsTornadoSpeed = v end })
+WingTab:AddSlider({ Name = "竜巻 半径", Min = 1, Max = 100, Default = 13, Increment = 1, Callback = function(v) WingsTornadoRadius = v end })
+WingTab:AddSlider({ Name = "竜巻 高さ", Min = 1, Max = 150, Default = 23, Increment = 1, Callback = function(v) WingsTornadoHeight = v end })
+
+WingTab:AddSection({Name = "円形モード設定"})
+WingTab:AddSlider({ Name = "円形 速度", Min = 1, Max = 50, Default = 10, Increment = 1, Callback = function(v) WingsCircleSpeed = v end })
+WingTab:AddSlider({ Name = "円形 半径", Min = 1, Max = 100, Default = 13, Increment = 1, Callback = function(v) WingsCircleRadius = v end })
+WingTab:AddSlider({ Name = "円形 高さ", Min = -20, Max = 100, Default = 2, Increment = 1, Callback = function(v) WingsCircleHeight = v end })
+
+-- 伸縮コーンモード
+WingTab:AddSection({Name = "特殊形状: 伸縮コーン"})
+WingTab:AddToggle({
+    Name = "コーンモード起動",
+    Default = false,
+    Callback = function(v)
+        if v then
+            if WingsLoopConn then WingsLoopConn:Disconnect() end
+            if WingsTornadoConn then WingsTornadoConn:Disconnect() end
+            if WingsCircleConn then WingsCircleConn:Disconnect() end
+            WingsStartCone()
+        else 
+            WingsStopCone()
+            if WingsEnabled then WingsRescan(); WingsStartLoop() end
+        end
+    end
+})
+
+WingTab:AddSlider({Name = "最大高さ", Min = 1, Max = 150, Default = 40, Increment = 1, Callback = function(v) WingsConeMaxH = v end})
+WingTab:AddSlider({Name = "伸縮スピード", Min = 0, Max = 10, Default = 2, Increment = 0.1, Callback = function(v) WingsConeGrowS = v end})
+WingTab:AddSlider({Name = "円の広さ", Min = 1, Max = 100, Default = 15, Increment = 1, Callback = function(v) WingsConeRadius = v end})
+
+-- ============================================
+-- タブ2: 掴み機能
+-- ============================================
+local GrabTab = Win:MakeTab({
+    Name = "掴み機能",
+    Icon = "rbxassetid://7733798691",
+    PremiumOnly = false
+})
+
+GrabTab:AddSection({ Name = "掴みオプション" })
+
+GrabTab:AddToggle({
+    Name = "キック掴み",
+    Default = false,
+    Callback = function(Value) EggConfig.Grab.KickGrab = Value end
+})
+
+GrabTab:AddToggle({
+    Name = "キル掴み",
+    Default = false,
+    Callback = function(Value) EggConfig.Grab.KillGrab = Value end
+})
+
+GrabTab:AddToggle({
+    Name = "奈落掴み",
+    Default = false,
+    Callback = function(Value) EggConfig.Grab.VoidGrab = Value end
+})
+
+GrabTab:AddToggle({
+    Name = "固定掴み",
+    Default = false,
+    Callback = function(Value) EggConfig.Grab.AnchorGrab = Value end
+})
+
+GrabTab:AddSection({ Name = "投げる強さ設定" })
+
+GrabTab:AddToggle({
+    Name = "投げる強さON/OFF",
+    Default = false,
+    Callback = function(Value) EggConfig.Grab.ThrowEnabled = Value end
+})
+
+GrabTab:AddSlider({
+    Name = "投げる強さ",
+    Min = 0,
+    Max = 10000,
+    Default = 250,
+    Color = Color3.fromRGB(255, 255, 255),
+    Increment = 10,
+    ValueName = "強さ",
+    Callback = function(Value) EggConfig.Grab.ThrowPower = Value end
+})
+
+-- ============================================
+-- タブ3: 防御機能
+-- ============================================
+local DefenseTab = Win:MakeTab({
+    Name = "防御機能",
+    Icon = "rbxassetid://6034509993",
+    PremiumOnly = false
+})
+
+DefenseTab:AddSection({ Name = "防御オプション" })
+
+DefenseTab:AddToggle({ Name = "アンチ掴み", Default = false, Callback = function(v) EggConfig.Defense.AntiGrab = v end })
+DefenseTab:AddToggle({ Name = "アンチ奈落", Default = false, Callback = function(v) EggConfig.Defense.AntiVoid = v end })
+DefenseTab:AddToggle({ Name = "アンチ爆発", Default = false, Callback = function(v) EggConfig.Defense.AntiExplode = v end })
+DefenseTab:AddToggle({ Name = "アンチグッチ", Default = false, Callback = function(v) EggConfig.Defense.AntiGucci = v end })
+DefenseTab:AddToggle({ Name = "アンチラグドール", Default = false, Callback = function(v) EggConfig.Defense.AntiRagdoll = v end })
+
+-- ============================================
+-- タブ4: 視点設定
+-- ============================================
+local CameraTab = Win:MakeTab({
+    Name = "視点設定",
+    Icon = "rbxassetid://7733798407",
+    PremiumOnly = false
+})
+
+CameraTab:AddSection({ Name = "カメラメニュー" })
+
+CameraTab:AddToggle({
+    Name = "自由視点",
+    Default = false,
+    Callback = function(Value)
+        EggConfig.Camera.SuperZoom = Value
+        updateCameraZoom()
+        updateCameraMode()
+    end
+})
+
+CameraTab:AddSlider({
+    Name = "ズーム距離",
+    Min = 0,
+    Max = 500,
+    Default = 128,
+    Color = Color3.fromRGB(255, 255, 255),
+    Increment = 10,
+    ValueName = "距離",
+    Callback = function(Value)
+        EggConfig.Camera.MaxZoom = Value
+        updateCameraZoom()
+    end
+})
+
+CameraTab:AddSlider({
+    Name = "視野角 (FOV)",
+    Min = 70,
+    Max = 120,
+    Default = 70,
+    Callback = function(V)
+        Cam.FieldOfView = V
+        animatedNotification("FOV設定", "視野角: " .. V, 2)
+    end
+})
+
+CameraTab:AddSlider({
+    Name = "FPS上限",
+    Min = 60,
+    Max = 600,
+    Default = 120,
+    Increment = 1,
+    Callback = function(V)
+        setfpscap(V)
+        animatedNotification("FPS設定", "FPS上限: " .. V, 2)
+    end
+})
+
+-- ============================================
+-- タブ5: オーラ機能
+-- ============================================
+local AuraTab = Win:MakeTab({
+    Name = "オーラ機能",
+    Icon = "rbxassetid://7733793319",
+    PremiumOnly = false
+})
+
+AuraTab:AddSection({ Name = "基本オーラ" })
+
+AuraTab:AddToggle({ Name = "キルオーラ", Default = false, Callback = function(v) Config.Aura.KillAura = v end })
+AuraTab:AddToggle({ Name = "奈落オーラ", Default = false, Callback = function(v) Config.Aura.VoidAura = v end })
+AuraTab:AddToggle({ Name = "ラグドールオーラ", Default = false, Callback = function(v) Config.Aura.RagdollAura = v end })
+AuraTab:AddToggle({ Name = "ぶっ飛ばしオーラ", Default = false, Callback = function(v) Config.Aura.BlastAura = v end })
+AuraTab:AddToggle({ Name = "回転オーラ", Default = false, Callback = function(v) Config.Aura.SpinAura = v end })
+AuraTab:AddToggle({ Name = "投げ飛ばしオーラ", Default = false, Callback = function(v) Config.Aura.FlingAura = v end })
+AuraTab:AddToggle({ Name = "足遅オーラ", Default = false, Callback = function(v) Config.Aura.SlowLegsAura = v end })
+AuraTab:AddToggle({ Name = "イライラオーラ", Default = false, Callback = function(v) Config.Aura.IrritateAura = v end })
+
+AuraTab:AddSection({ Name = "パラメータ設定" })
+
+AuraTab:AddSlider({ Name = "オーラ半径", Min = 10, Max = 500, Default = 100, Increment = 10, Callback = function(v) Config.Aura.Radius = v end })
+AuraTab:AddSlider({ Name = "オーラ高さ", Min = 10, Max = 500, Default = 100, Increment = 10, Callback = function(v) Config.Aura.Height = v end })
+AuraTab:AddSlider({ Name = "吹っ飛ばし威力", Min = 1000, Max = 10000, Default = 5000, Increment = 100, Callback = function(v) Config.Aura.BlastPower = v end })
+AuraTab:AddSlider({ Name = "回転速度", Min = 10, Max = 500, Default = 100, Increment = 10, Callback = function(v) Config.Aura.SpinSpeed = v end })
+AuraTab:AddSlider({ Name = "投げ飛ばし威力", Min = 1000, Max = 10000, Default = 3000, Increment = 100, Callback = function(v) Config.Aura.FlingPower = v end })
+AuraTab:AddSlider({ Name = "足の遅さ", Min = 1, Max = 16, Default = 5, Increment = 1, Callback = function(v) Config.Aura.SlowLegsSpeed = v end })
+AuraTab:AddSlider({ Name = "イライラ強度", Min = 10, Max = 100, Default = 30, Increment = 5, Callback = function(v) Config.Aura.IrritateIntensity = v end })
+
+-- ============================================
+-- タブ6: ターゲット機能
+-- ============================================
+local TargetTab = Win:MakeTab({ 
+    Name = "ターゲット機能", 
+    Icon = "rbxassetid://7733765398",
+    PremiumOnly = false 
+})
+
+local function getPlayerInfo(player)
+    local displayName = player.DisplayName
+    local username = player.Name
+    local userId = player.UserId
+    return string.format("%s (@%s) [ID: %d]", displayName, username, userId)
+end
+
+local function updatePlayerList()
+    local playerList = {}
+    for _, player in ipairs(P:GetPlayers()) do
+        if player ~= L then
+            table.insert(playerList, getPlayerInfo(player))
+        end
+    end
+    return playerList
+end
+
+local function getPlayerFromInfo(info)
+    for _, player in ipairs(P:GetPlayers()) do
+        if getPlayerInfo(player) == info then
+            return player
+        end
+    end
+    return nil
+end
+
+TargetTab:AddSection({ Name = "プレイヤー選択" })
+
+local PlayerDropdown = TargetTab:AddDropdown({
+    Name = "プレイヤーを選択",
+    Default = "",
+    Options = updatePlayerList(),
+    Callback = function(value)
+        Config.Target.SelectedPlayer = getPlayerFromInfo(value)
+    end
+})
+
+TargetTab:AddButton({
+    Name = "プレイヤーリスト更新",
+    Callback = function()
+        PlayerDropdown:Refresh(updatePlayerList(), true)
+    end
+})
+
+TargetTab:AddSection({ Name = "ターゲット操作" })
+
+TargetTab:AddToggle({
+    Name = "ターゲットに自動テレポート",
+    Default = false,
+    Callback = function(v)
+        Config.Target.TeleportToTarget = v
+    end
+})
+
+TargetTab:AddButton({
+    Name = "選択したプレイヤーをキル",
+    Callback = function()
+        if Config.Target.SelectedPlayer then
+            KillPlayer(Config.Target.SelectedPlayer)
+        end
+    end
+})
+
+TargetTab:AddSection({ Name = "全プレイヤー操作" })
+
+TargetTab:AddToggle({
+    Name = "全プレイヤー連続キル",
+    Default = false,
+    Callback = function(v)
+        Config.Target.KillAllLoop = v
+    end
+})
+
+TargetTab:AddButton({
+    Name = "全プレイヤーキル",
+    Callback = function()
+        for _, player in ipairs(P:GetPlayers()) do
+            if player ~= L and player.Character then
+                KillPlayer(player)
+                task.wait(0.2)
+            end
+        end
+    end
+})
+
+-- ============================================
+-- タブ7: 全員テレポート
+-- ============================================
+local TeleportTab = Win:MakeTab({ 
+    Name = "全員テレポート", 
+    Icon = "rbxassetid://7733798407",
+    PremiumOnly = false 
+})
+
+TeleportTab:AddSection({ Name = "全員テレポート設定" })
+
+TeleportTab:AddToggle({
+    Name = "全員テレポートON/OFF",
+    Default = false,
+    Callback = function(v)
+        if v then
+            StartAllTeleportLoop()
+        else
+            StopAllTeleportLoop()
+        end
+    end
+})
+
+TeleportTab:AddSlider({
+    Name = "テレポート間隔",
+    Min = 0.1,
+    Max = 2.0,
+    Default = 0.5,
+    Increment = 0.1,
+    ValueName = "秒",
+    Callback = function(v)
+        AllTeleportInterval = v
+    end
+})
+
+-- ============================================
+-- タブ8: エイムアシスト
+-- ============================================
+local SilentAimTab = Win:MakeTab({
+    Name = "エイムアシスト",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+
+SilentAimTab:AddSection({Name = "📡 サイレントエイム設定"})
+
+SilentAimTab:AddToggle({
+    Name = "サイレントエイム有効化",
+    Default = false,
+    Callback = function(V)
+        SIL = V
+        STS()
+        animatedNotification("サイレントエイム", V and "有効化しました" or "無効化しました", 2)
+    end
+})
+
+SilentAimTab:AddSlider({
+    Name = "リーチ距離",
+    Min = 0,
+    Max = 50,
+    Default = 30,
+    Increment = 1,
+    ValueName = "studs",
+    Callback = function(V)
+        saDist = V
+        animatedNotification("設定更新", "リーチ距離: " .. V .. " studs", 2)
+    end
+})
+
+SilentAimTab:AddLabel("ヒットボックス: Head/Torso/Legs")
+
+SilentAimTab:AddSection({Name = "🎯 トリガーボット設定"})
+
+SilentAimTab:AddToggle({
+    Name = "トリガーボット",
+    Default = false,
+    Callback = function(V)
+        TriggerBotEnabled = V
+        if V then AutoShootEnabled = false end
+        animatedNotification("トリガーボット", V and "有効化しました" or "無効化しました", 2)
+    end
+})
+
+SilentAimTab:AddToggle({
+    Name = "自動連射モード",
+    Default = false,
+    Callback = function(V)
+        AutoShootEnabled = V
+        if V then TriggerBotEnabled = false end
+        animatedNotification("自動連射", V and "有効化しました" or "無効化しました", 2)
+    end
+})
+
+SilentAimTab:AddSlider({
+    Name = "発射間隔",
+    Min = 0.05,
+    Max = 0.5,
+    Default = 0.1,
+    Increment = 0.01,
+    ValueName = "秒",
+    Callback = function(V)
+        TriggerBotDelay = V
+        animatedNotification("設定更新", "発射間隔: " .. V .. "秒", 2)
+    end
+})
+
+SilentAimTab:AddDropdown({
+    Name = "キーバインド",
+    Default = "Q",
+    Options = {"Q", "E", "R", "F", "V", "B", "X", "C"},
+    Callback = function(V)
+        TriggerBotKeybind = V
+        animatedNotification("キーバインド", "トリガーボット: " .. V .. "キー", 2)
+    end
+})
+
+-- ============================================
+-- タブ9: ビジュアル機能
+-- ============================================
+local VisualTab = Win:MakeTab({
+    Name = "ビジュアル",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+
+VisualTab:AddSection({Name = "🎨 UIカラー設定"})
+
+VisualTab:AddToggle({
+    Name = "UIライブリー (レインボーUI)",
+    Default = false,
+    Callback = function(e)
+        RainbowEnabled = e
+        if e then CustomColorEnabled = false end
+        updateUIColor()
+        animatedNotification("UIカラー", e and "レインボーUI有効" or "レインボーUI無効", 2)
+    end
+})
+
+VisualTab:AddColorpicker({
+    Name = "カスタムカラー選択",
+    Default = Color3.fromRGB(0, 255, 255),
+    Callback = function(color)
+        selectedColor = color
+    end
+})
+
+VisualTab:AddButton({
+    Name = "カスタムカラーを適用",
+    Callback = function()
+        CustomColorEnabled = true
+        RainbowEnabled = false
+        applyCustomColor()
+        animatedNotification("UIカラー", "カスタムカラーを適用しました", 2)
+    end
+})
+
+VisualTab:AddButton({
+    Name = "デフォルトカラーに戻す",
+    Callback = function()
+        CustomColorEnabled = false
+        RainbowEnabled = false
+        resetUIColor()
+        animatedNotification("UIカラー", "デフォルトカラーに戻しました", 2)
+    end
+})
+
+VisualTab:AddSection({Name = "☀️ 環境設定"})
+
+VisualTab:AddToggle({
+    Name = "フルブライト (明るさ最大)",
+    Default = false,
+    Callback = function(e)
+        if e then
+            Li.Brightness = 2
+            Li.ClockTime = 14
+            Li.FogEnd = 100000
+            Li.GlobalShadows = false
+        else
+            Li.Brightness = 1
+            Li.ClockTime = 12
+            Li.FogEnd = 100000
+            Li.GlobalShadows = true
+        end
+        animatedNotification("ブライト設定", e and "フルブライト有効" or "フルブライト無効", 2)
+    end
+})
+
+VisualTab:AddSection({Name = "💰 所持金表示偽装"})
+
+VisualTab:AddTextbox({
+    Name = "金額を設定",
+    Default = "",
+    TextDisappear = true,
+    Callback = function(V)
+        local coinAmount = tonumber(V)
+        if coinAmount then
+            pcall(function()
+                local menuGui = L.PlayerGui:FindFirstChild("MenuGui")
+                if menuGui then
+                    local coinsFrame = menuGui:FindFirstChild("TopRight")
+                    if coinsFrame then
+                        coinsFrame = coinsFrame:FindFirstChild("CoinsFrame")
+                        if coinsFrame then
+                            local coinsDisplay = coinsFrame:FindFirstChild("CoinsDisplay")
+                            if coinsDisplay then
+                                local coinsText = coinsDisplay:FindFirstChild("Coins")
+                                if coinsText and coinsText:IsA("TextLabel") then
+                                    coinsText.Text = tostring(coinAmount)
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+})
+
+VisualTab:AddSection({Name = "🎯 照準器カスタム"})
+
+VisualTab:AddToggle({
+    Name = "カスタム照準器を表示",
+    Default = false,
+    Callback = function(e)
+        crosshairVisible = e
+        pcall(function()
+            local crosshairs = L.PlayerGui:FindFirstChild("Crosshairs")
+            if crosshairs then
+                if e then
+                    if not customCrosshair then
+                        customCrosshair = crosshairs:Clone()
+                        customCrosshair.Name = "CustomCrosshairs"
+                        customCrosshair.Parent = L.PlayerGui
+                    end
+                    crosshairs.Enabled = false
+                    customCrosshair.Enabled = true
+                else
+                    crosshairs.Enabled = true
+                    if customCrosshair then
+                        customCrosshair.Enabled = false
+                    end
+                end
+            end
+        end)
+        animatedNotification("照準器", e and "カスタム照準器表示" or "デフォルト照準器表示", 2)
+    end
+})
+
+VisualTab:AddSlider({
+    Name = "不透明度",
+    Min = 0,
+    Max = 1,
+    Default = 1,
+    Increment = 0.1,
+    Callback = function(V)
+        crosshairOpacity = V
+        if not crosshairRainbow then
+            updateCrosshair()
+        end
+        animatedNotification("照準器設定", "不透明度: " .. V, 2)
+    end
+})
+
+VisualTab:AddColorpicker({
+    Name = "照準器の色",
+    Default = Color3.new(1, 1, 1),
+    Callback = function(V)
+        crosshairColor = V
+        if not crosshairRainbow then
+            updateCrosshair()
+        end
+        animatedNotification("照準器設定", "色を変更しました", 2)
+    end
+})
+
+VisualTab:AddToggle({
+    Name = "レインボー照準器",
+    Default = false,
+    Callback = function(e)
+        crosshairRainbow = e
+        animatedNotification("照準器", e and "レインボー照準器有効" or "レインボー照準器無効", 2)
+    end
+})
+
+-- ============================================
+-- 防御機能ループ
+-- ============================================
+R.Heartbeat:Connect(function(dt)
+    EggDefenseTimer = EggDefenseTimer + dt
+    local root, hum = LocalHRP(), getHum()
+    if not root or not hum then return end
+    
+    if EggDefenseTimer >= 0.1 then
+        if EggConfig.Defense.AntiGrab then 
+            pcall(function() 
+                STR:FireServer(L) 
+            end) 
+        end
+        
+        if EggConfig.Defense.AntiVoid and root.Position.Y < -87.5 then 
+            root.CFrame = CFrame.new(0, 10, 0) 
+        end
+        
+        if EggConfig.Defense.AntiRagdoll and hum:GetState() == Enum.HumanoidStateType.Ragdoll then 
+            hum:ChangeState(Enum.HumanoidStateType.Running) 
+        end
+        
+        EggDefenseTimer = 0
+    end
+    
+    updateCameraZoom()
+    
+    if lastSuperZoomState ~= EggConfig.Camera.SuperZoom then
+        updateCameraMode()
+        lastSuperZoomState = EggConfig.Camera.SuperZoom
+    end
+end)
+
+-- ============================================
+-- オーラループ
+-- ============================================
+R.Heartbeat:Connect(function(dt)
+    AuraTimer = AuraTimer + dt
+    local root = LocalHRP()
+    if not root then return end
+    
+    if Config.Target.TeleportToTarget and Config.Target.SelectedPlayer then
+        local targetChar = Config.Target.SelectedPlayer.Character
+        if targetChar and targetChar:FindFirstChild("HumanoidRootPart") then
+            root.CFrame = targetChar.HumanoidRootPart.CFrame + Vector3.new(0, 5, 0)
+        end
+    end
+    
+    if AuraTimer >= 0.5 then
+        local anyAuraActive = false
+        for _, v in pairs(Config.Aura) do
+            if type(v) == "boolean" and v then
+                anyAuraActive = true
+                break
+            end
+        end
+        
+        if anyAuraActive then
+            local nearParts = GetNearPartsInSphere(root.Position, Config.Aura.Radius, Config.Aura.Height)
+            
+            for _, part in ipairs(nearParts) do
+                if part.Name == "HumanoidRootPart" and not part:IsDescendantOf(L.Character) then
+                    local character = part.Parent
+                    SetNetworkOwner(part)
+                    
+                    affectedPlayers[character] = true
+                    
+                    if Config.Aura.SlowLegsAura then MakeSlowLegs(character) end
+                    if Config.Aura.IrritateAura then IrritatePlayer(character) end
+                    
+                    if Config.Aura.BlastAura then 
+                        local direction = (part.Position - root.Position).Unit
+                        Velocity(part, direction * Config.Aura.BlastPower)
+                    end
+                    if Config.Aura.SpinAura then 
+                        local bav = Instance.new("BodyAngularVelocity")
+                        bav.MaxTorque = Vector3.new(1e8, 1e8, 1e8)
+                        bav.AngularVelocity = Vector3.new(0, Config.Aura.SpinSpeed, 0)
+                        bav.Parent = part
+                        D:AddItem(bav, 0.1)
+                    end
+                    if Config.Aura.FlingAura then 
+                        flingMemory[character] = true
+                        local randomDir = Vector3.new(
+                            math.random(-100, 100),
+                            math.random(50, 100),
+                            math.random(-100, 100)
+                        ).Unit
+                        Velocity(part, randomDir * Config.Aura.FlingPower)
+                    end
+                    if Config.Aura.KillAura then 
+                        MoveTo(part, CFrame.new(4096, -75, 4096)) 
+                        Velocity(part, Vector3.new(0, -1000, 0)) 
+                    end
+                    if Config.Aura.VoidAura then Velocity(part, Vector3.new(0, 10000, 0)) end
+                end
+            end
+        end
+        AuraTimer = 0
+    end
+    
+    for character, _ in pairs(affectedPlayers) do
+        if character and character.Parent then
+            if Config.Aura.SlowLegsAura then
+                MakeSlowLegs(character)
+            end
+            
+            if Config.Aura.IrritateAura then
+                IrritatePlayer(character)
+            end
+            
+            if flingMemory[character] and Config.Aura.FlingAura then
+                local root = character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local randomDir = Vector3.new(
+                        math.random(-100, 100),
+                        math.random(50, 100),
+                        math.random(-100, 100)
+                    ).Unit
+                    Velocity(root, randomDir * Config.Aura.FlingPower / 2)
+                end
+            end
+        else
+            affectedPlayers[character] = nil
+            flingMemory[character] = nil
+        end
+    end
+    
+    if Config.Target.KillAllLoop then
+        task.spawn(function()
+            for _, player in ipairs(P:GetPlayers()) do
+                if player ~= L and player.Character then
+                    KillPlayer(player)
+                    task.wait(0.5)
+                end
+            end
+        end)
+    end
+end)
+
+-- ============================================
+-- トリガーボットループ
+-- ============================================
+R.RenderStepped:Connect(function()
+    if TriggerBotEnabled or AutoShootEnabled then
+        TriggerBot()
+    end
+end)
+
+-- ============================================
+-- サイレントエイム初期化
+-- ============================================
+STS()
+
+-- ============================================
+-- UIライブリー初期化
+-- ============================================
+spawn(function()
+    wait(0.5)
+    updateUIColor()
+end)
+
+-- ============================================
+-- アニメーション追加
+-- ============================================
+spawn(function()
+    wait(1)
+    pcall(function()
+        for _, tab in pairs(Win.Tabs) do
+            for _, section in pairs(tab.Sections) do
+                for _, element in pairs(section.Elements) do
+                    if element.Type == "Button" then
+                        if element.Instance and element.Instance:IsA("TextButton") then
+                            createHoverAnimation(element.Instance)
+                            createClickAnimation(element.Instance)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end)
+
+-- ============================================
+-- 初期設定
+-- ============================================
+L.CameraMode = Enum.CameraMode.Classic
+L.CameraMinZoomDistance = 0.5
+updateCameraZoom()
+updateCameraMode()
+lastSuperZoomState = EggConfig.Camera.SuperZoom
+WingsDefaultZoom = L.CameraMaxZoomDistance
+
+-- 初期化通知
+animatedNotification("TYHUB Complete", "全機能が読み込まれました（9タブ + WINGS）", 3)
+
+-- ============================================
+-- OrionLib初期化
+-- ============================================
+OrionLib:Init()
+
+-- tp-hubスタイルの通知
+task.delay(0.5, function()
+    OrionLib:MakeNotification({ Name = "警告", Content = "現在 Stick 以外は使用できません", Time = 4 })
+end)
+
+print("==========================================")
+print("TYHUB Fling Things and People + WINGS")
+print("読み込み完了 - 全9タブ + WINGS")
+print("==========================================")
+print("機能:")
+print("✓ WINGS (翼モード / 竜巻 / 円形 / コーン)")
+print("✓ 掴み機能（キック/キル/奈落/固定/投げ）")
+print("✓ 防御機能（アンチ各種）")
+print("✓ 視点設定（自由視点/ズーム/FOV/FPS）")
+print("✓ オーラ機能（8種類）")
+print("✓ ターゲット機能（選択/自動テレポート/キル）")
+print("✓ 全員テレポート機能")
+print("✓ エイムアシスト（サイレントエイム/トリガーボット）")
+print("✓ ビジュアル機能（UIカラー/照準器/環境設定）")
+print("==========================================")
+print("【削除した機能】")
+print("✓ WINGSタブの「カメラズーム5000」を削除しました")
+print("==========================================")
